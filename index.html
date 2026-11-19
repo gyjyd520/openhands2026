@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>番茄钟</title>
+<style>
+  :root {
+    --focus: #e4572e;
+    --break: #2e9e6b;
+    --bg: #f7f3ef;
+    --card: #ffffff;
+    --text: #33302e;
+    --muted: #8c857e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    padding: 24px;
+  }
+  .app {
+    width: 100%;
+    max-width: 420px;
+    background: var(--card);
+    border-radius: 20px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+    padding: 32px 28px 28px;
+    text-align: center;
+  }
+  h1 {
+    margin: 0 0 20px;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 2px;
+  }
+  .modes {
+    display: flex;
+    gap: 8px;
+    background: var(--bg);
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 28px;
+  }
+  .modes button {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 15px;
+    padding: 10px 0;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all .18s;
+  }
+  .modes button.active {
+    background: var(--card);
+    color: var(--text);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    font-weight: 600;
+  }
+  .timer {
+    position: relative;
+    width: 240px;
+    height: 240px;
+    margin: 0 auto 28px;
+  }
+  .timer svg { transform: rotate(-90deg); }
+  .track { fill: none; stroke: #eee7e1; stroke-width: 12; }
+  .progress {
+    fill: none;
+    stroke: var(--focus);
+    stroke-width: 12;
+    stroke-linecap: round;
+    transition: stroke-dashoffset .3s linear, stroke .3s;
+  }
+  .time {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .time .clock {
+    font-size: 52px;
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 1px;
+  }
+  .time .label {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 26px;
+  }
+  .controls button {
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    padding: 12px 28px;
+    cursor: pointer;
+    transition: all .18s;
+  }
+  #startBtn { background: var(--focus); color: #fff; }
+  #startBtn:hover { filter: brightness(1.08); }
+  #resetBtn { background: var(--bg); color: var(--muted); }
+  #resetBtn:hover { background: #ece4dd; }
+  .stats {
+    border-top: 1px solid #f0eae5;
+    padding-top: 18px;
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .stats b { color: var(--focus); font-size: 18px; font-weight: 600; }
+  .stats .sub { display: block; margin-top: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <h1>番茄钟</h1>
+
+    <div class="modes">
+      <button data-mode="focus" class="active">专注 25 分钟</button>
+      <button data-mode="break">休息 5 分钟</button>
+    </div>
+
+    <div class="timer">
+      <svg width="240" height="240">
+        <circle class="track" cx="120" cy="120" r="110"></circle>
+        <circle class="progress" id="progress" cx="120" cy="120" r="110"></circle>
+      </svg>
+      <div class="time">
+        <div class="clock" id="clock">25:00</div>
+        <div class="label" id="stateLabel">准备开始</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn">开始</button>
+      <button id="resetBtn">重置</button>
+    </div>
+
+    <div class="stats">
+      今天完成了 <b id="count">0</b> 个番茄
+      <span class="sub" id="date"></span>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var DURATIONS = { focus: 25 * 60, break: 5 * 60 };
+  var STORAGE_KEY = 'pomodoro-stats';
+
+  var clockEl = document.getElementById('clock');
+  var stateLabelEl = document.getElementById('stateLabel');
+  var progressEl = document.getElementById('progress');
+  var startBtn = document.getElementById('startBtn');
+  var resetBtn = document.getElementById('resetBtn');
+  var countEl = document.getElementById('count');
+  var dateEl = document.getElementById('date');
+  var modeBtns = document.querySelectorAll('.modes button');
+
+  var CIRCUMFERENCE = 2 * Math.PI * 110;
+  progressEl.style.strokeDasharray = CIRCUMFERENCE;
+
+  var mode = 'focus';
+  var remaining = DURATIONS.focus;
+  var running = false;
+  var endTime = 0;
+  var tickId = null;
+
+  function todayKey() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function loadStats() {
+    var raw;
+    try { raw = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) { raw = null; }
+    if (!raw || raw.date !== todayKey()) return { date: todayKey(), count: 0 };
+    return { date: raw.date, count: Number(raw.count) || 0 };
+  }
+
+  function saveStats(stats) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stats)); } catch (e) {}
+  }
+
+  var stats = loadStats();
+
+  function renderStats() {
+    countEl.textContent = stats.count;
+    dateEl.textContent = stats.date;
+  }
+
+  function formatTime(sec) {
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  function render() {
+    clockEl.textContent = formatTime(remaining);
+    var total = DURATIONS[mode];
+    var ratio = remaining / total;
+    progressEl.style.strokeDashoffset = CIRCUMFERENCE * (1 - ratio);
+    progressEl.style.stroke = mode === 'focus' ? 'var(--focus)' : 'var(--break)';
+    startBtn.textContent = running ? '暂停' : (remaining === DURATIONS[mode] ? '开始' : '继续');
+    document.title = (running ? formatTime(remaining) + ' · ' : '') + '番茄钟';
+  }
+
+  function playChime() {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    var ctx = new Ctx();
+    var now = ctx.currentTime;
+    // 三声提示音
+    [0, 0.28, 0.56].forEach(function (offset) {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.35, now + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.22);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.24);
+    });
+    setTimeout(function () { ctx.close(); }, 1200);
+  }
+
+  function complete() {
+    running = false;
+    clearInterval(tickId);
+    tickId = null;
+    playChime();
+    if (mode === 'focus') {
+      stats = loadStats();
+      stats.count += 1;
+      saveStats(stats);
+      renderStats();
+      setMode('break');
+      stateLabelEl.textContent = '专注结束，休息一下';
+    } else {
+      setMode('focus');
+      stateLabelEl.textContent = '休息结束，继续加油';
+    }
+    render();
+  }
+
+  function tick() {
+    remaining = Math.max(0, Math.round((endTime - Date.now()) / 1000));
+    if (remaining <= 0) {
+      complete();
+      return;
+    }
+    render();
+  }
+
+  function start() {
+    if (running) return;
+    running = true;
+    endTime = Date.now() + remaining * 1000;
+    tickId = setInterval(tick, 200);
+    stateLabelEl.textContent = mode === 'focus' ? '专注中…' : '休息中…';
+    render();
+  }
+
+  function pause() {
+    if (!running) return;
+    running = false;
+    clearInterval(tickId);
+    tickId = null;
+    stateLabelEl.textContent = '已暂停';
+    render();
+  }
+
+  function reset() {
+    running = false;
+    clearInterval(tickId);
+    tickId = null;
+    remaining = DURATIONS[mode];
+    stateLabelEl.textContent = '准备开始';
+    render();
+  }
+
+  function setMode(next) {
+    mode = next;
+    running = false;
+    clearInterval(tickId);
+    tickId = null;
+    remaining = DURATIONS[mode];
+    modeBtns.forEach(function (b) {
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
+    stateLabelEl.textContent = '准备开始';
+    render();
+  }
+
+  startBtn.addEventListener('click', function () {
+    running ? pause() : start();
+  });
+  resetBtn.addEventListener('click', reset);
+  modeBtns.forEach(function (b) {
+    b.addEventListener('click', function () { setMode(b.dataset.mode); });
+  });
+
+  renderStats();
+  render();
+})();
+</script>
+</body>
+</html>
